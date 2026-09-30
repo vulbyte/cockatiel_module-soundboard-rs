@@ -1,0 +1,37 @@
+{
+  "name": "soundboard",
+  "description": "Viewers spend points to play a sound effect on the streamer's machine (!snd airhorn, !snd laugh). Drop audio files (wav/mp3/flac/ogg) into the sounds_dir folder and the module picks them all up automatically — the file stem is the command name. Every clip is normalised (peak-scaled) then played at the single volume, so a quiet and a loud recording sound the same loudness. Sounds play serially: one at a time, the next starts the moment the previous finishes. Optional cooldown_secs adds a fixed pause between plays.",
+  "version": "0.1.0",
+  "capabilities": "preprocess",
+  "root_file": "./src/main.rs",
+  "launch_command": "cargo run",
+  "command_flags": ["--release"],
+  "binary": {
+    "linux": {
+      "aarch64": "target/release/cockatiel_soundboard",
+      "arm": "target/release/cockatiel_soundboard",
+      "x86_64": "target/release/cockatiel_soundboard"
+    },
+    "macos": {
+      "aarch64": "target/release/cockatiel_soundboard",
+      "arm": "target/release/cockatiel_soundboard",
+      "x86_64": "target/release/cockatiel_soundboard"
+    },
+    "windows": {
+      "aarch64": "target/release/cockatiel_soundboard.exe",
+      "arm": "target/release/cockatiel_soundboard.exe",
+      "x86_64": "target/release/cockatiel_soundboard.exe"
+    }
+  },
+  "build_command": "cargo",
+  "build_flags": ["build", "--release"],
+  "credentials": [
+    { "key": "price", "label": "Score cost per sound", "list": false, "sensitive": false },
+    { "key": "sounds_dir", "label": "Sounds folder (drop wav/mp3/flac/ogg files here)", "list": false, "sensitive": false },
+    { "key": "volume", "label": "Volume (0..1, applied after normalisation)", "list": false, "sensitive": false }
+  ],
+  "autostart": false,
+  "authority": 0,
+  "min_rank": 0,
+  "price": 10000
+}

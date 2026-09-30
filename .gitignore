@@ -1,0 +1,4 @@
+/target
+/config.json
+.env
+.cockatiel_pb2_cache/
