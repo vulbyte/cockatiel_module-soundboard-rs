@@ -94,8 +94,10 @@ fn default_sounds_dir() -> String {
     "sounds".into()
 }
 
+/// Default volume: 30%. Better to start too quiet than too loud — the
+/// streamer can raise it, but a blasting first sound is a bad first impression.
 fn default_volume() -> f32 {
-    1.0
+    0.3
 }
 
 /// The audio file extensions the soundboard accepts.
@@ -174,10 +176,22 @@ fn spawn_player(rx: mpsc::Receiver<PlayRequest>, cooldown_secs: u64) {
     });
 }
 
-/// Play one file at the given volume, NORMALISED so every clip is the same
-/// loudness. The whole file is decoded first, the peak sample found, and each
-/// sample scaled by `1/peak * volume` — a quiet recording and a loud one then
-/// both play at `volume`, rather than one blasting over the other.
+/// The target integrated loudness (LUFS) every clip is normalised to before the
+/// volume is applied. -14 LUFS is the common streaming/YouTube loudness target;
+/// two files with wildly different recorded levels both end up here, so neither
+/// blasts over the other.
+const TARGET_LUFS: f64 = -14.0;
+
+/// The max gain (dB) the normaliser may apply. A file measured far below the
+/// target is brought up but clamped, so a near-silent clip can't be boosted
+/// into distortion.
+const MAX_GAIN_DB: f64 = 24.0;
+
+/// Play one file at the given volume, NORMALISED to a target LUFS loudness.
+/// The whole file is decoded, its integrated loudness measured with a
+/// K-weighted ITU-R BS.1770 meter, and each sample scaled by
+/// `10^((target - measured)/20) * volume`. A quiet recording and a loud one
+/// both come out at the same loudness, then the volume is applied on top.
 fn play_one(
     handle: &OutputStreamHandle,
     path: &Path,
@@ -192,25 +206,69 @@ fn play_one(
     let source = Decoder::new(BufReader::new(file))
         .map_err(|e| format!("decode {}: {e}", path.display()))?;
 
-    // Decode fully, find the peak, and re-emit as a normalised buffer.
+    // Decode fully to interleaved f32, remembering the layout for both the
+    // loudness measurement and the replay buffer.
     use rodio::source::Source;
     let channels = source.channels();
     let sample_rate = source.sample_rate();
     let samples: Vec<f32> = source.convert_samples().collect();
-    let peak = samples.iter().fold(0.0f32, |acc, s| acc.max(s.abs()));
-    let peak = peak.max(1e-9); // avoid divide-by-zero on a silent file
+    if samples.is_empty() {
+        return Err(format!("no audio samples in {}", path.display()));
+    }
+
+    // Measure integrated loudness (K-weighted, ITU-R BS.1770).
+    let measured_lufs = measure_lufs(&samples, channels, sample_rate);
+    let gain_db = (TARGET_LUFS - measured_lufs).clamp(-MAX_GAIN_DB, MAX_GAIN_DB);
+    let gain = 10f64.powf(gain_db / 20.0) as f32;
     let volume = volume.clamp(0.0, 1.0);
-    let gain = (1.0 / peak) * volume;
-    let normalised: Vec<f32> = samples.into_iter().map(|s| s * gain).collect();
-    let buf = rodio::buffer::SamplesBuffer::new(channels, sample_rate, normalised);
+    let scaled: Vec<f32> = samples.into_iter().map(|s| s * gain * volume).collect();
+    info!(
+        "normalising '{}': measured {measured_lufs:.1} LUFS -> {:.1} dB gain (volume {volume})",
+        name,
+        gain_db
+    );
+    let buf = rodio::buffer::SamplesBuffer::new(channels, sample_rate, scaled);
 
     let sink = Sink::try_new(handle).map_err(|e| format!("sink: {e}"))?;
-    sink.set_volume(1.0); // normalisation already applied the gain
+    sink.set_volume(1.0); // gain + volume already baked into the samples
     sink.append(buf);
     // Block this task until the file has fully played.
     sink.sleep_until_end();
-    let _ = (name, from);
+    let _ = from;
     Ok(())
+}
+
+/// Measure the integrated loudness (LUFS) of interleaved samples using a
+/// K-weighted ITU-R BS.1770-4 meter.
+fn measure_lufs(samples: &[f32], channels: u16, sample_rate: u32) -> f64 {
+    use broadcast_loudness::{ChannelLayout, LoudnessMeter};
+    let mut meter = match channels {
+        1 => LoudnessMeter::new(sample_rate, ChannelLayout::Mono).ok(),
+        _ => LoudnessMeter::new(sample_rate, ChannelLayout::Stereo).ok(),
+    };
+    let Some(meter) = meter.as_mut() else {
+        return TARGET_LUFS; // meter unavailable -> assume on-target, no gain
+    };
+    let frames = samples.len() / channels.max(1) as usize;
+    for f in 0..frames {
+        let base = f * channels as usize;
+        if channels == 1 {
+            let _ = meter.push_f32(&[samples[base]]);
+        } else {
+            let l = samples[base];
+            let r = samples[base + 1];
+            let _ = meter.push_interleaved_f32(&[l], &[r]);
+        }
+    }
+    meter.finish();
+    let lufs = meter.integrated_lufs();
+    // A very short / near-silent file has no gated loudness blocks and reports
+    // -inf. Assume on-target (no gain) rather than boosting into distortion.
+    if lufs.is_finite() {
+        lufs
+    } else {
+        TARGET_LUFS
+    }
 }
 
 // ── connection / message loop ─────────────────────────────────────────────
@@ -556,7 +614,7 @@ mod tests {
         // Defaults when absent.
         let def = Config::default();
         assert_eq!(def.sounds_dir, "sounds");
-        assert_eq!(def.volume, 1.0);
+        assert_eq!(def.volume, 0.3, "default volume is 30% — quiet-first");
     }
 
     #[test]
@@ -565,5 +623,31 @@ mod tests {
         assert_eq!(cfg.volume.clamp(0.0, 1.0), 1.0);
         let cfg = Config { volume: -1.0, ..Config::default() };
         assert_eq!(cfg.volume.clamp(0.0, 1.0), 0.0);
+    }
+
+    #[test]
+    fn loudness_meter_ranks_louder_files_higher() {
+        // A full-scale sine measures louder than the same sine at 10% amplitude.
+        let sr = 48_000u32;
+        let n = 1_000_000; // ~21s, enough for gated blocks
+        let loud: Vec<f32> = (0..n).map(|i| (i as f32 * 0.1).sin() * 0.9).collect();
+        let quiet: Vec<f32> = (0..n).map(|i| (i as f32 * 0.1).sin() * 0.05).collect();
+        let loud_lufs = measure_lufs(&loud, 1, sr);
+        let quiet_lufs = measure_lufs(&quiet, 1, sr);
+        assert!(
+            loud_lufs > quiet_lufs,
+            "louder file should measure higher: loud={loud_lufs:.1} quiet={quiet_lufs:.1}"
+        );
+        // Both finite and in a sane range (not -inf, not absurd).
+        assert!(loud_lufs.is_finite() && quiet_lufs.is_finite());
+        assert!(loud_lufs > -40.0 && loud_lufs < 0.0);
+    }
+
+    #[test]
+    fn loudness_measurement_is_stable_for_silent_or_short_input() {
+        // Empty / near-silent input must not panic or return -inf.
+        assert!(measure_lufs(&[], 1, 44_100).is_finite());
+        let silent = vec![0.0f32; 1000];
+        assert!(measure_lufs(&silent, 1, 44_100).is_finite());
     }
 }

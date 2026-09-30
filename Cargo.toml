@@ -18,3 +18,4 @@ tracing-subscriber = "0.3"
 uuid = { version = "1", features = ["v7"] }
 rodio = "0.19"
 symphonia = { version = "0.5", features = ["mp3", "flac", "ogg"] }
+broadcast-loudness = "0.3"

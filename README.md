@@ -22,16 +22,16 @@ Under `module_specific`:
   "command_flag": "!",
   "price": 10000,
   "sounds_dir": "sounds",
-  "volume": 1.0,
+  "volume": 0.3,
   "cooldown_secs": 0
 }
 ```
 
 - **`sounds_dir`** — the folder to scan for audio files (relative to the
   module's working directory, or absolute).
-- **`volume`** — the single playback volume `[0,1]` (default `1.0`). It is
-  applied AFTER normalisation, so a quiet recording and a loud one both play at
-  the same loudness.
+- **`volume`** — the single playback volume `[0,1]` (default `0.3` — 30%, quiet
+  first; the streamer can raise it). It is applied AFTER normalisation, so a
+  quiet recording and a loud one both play at the same loudness.
 - **`price`** — points a viewer spends per sound (deducted from their current
   score by the engine; the lifetime total is untouched).
 - **`cooldown_secs`** — optional fixed pause (seconds) between plays. Default
@@ -39,9 +39,13 @@ Under `module_specific`:
 
 ## Normalisation
 
-Every clip is decoded, its peak sample is measured, and each sample is scaled
-by `1/peak × volume`. The result: all sounds play at the configured `volume`
-regardless of how loud or quiet the source file was recorded.
+Every clip is decoded and its integrated loudness is measured with a
+**K-weighted ITU-R BS.1770 meter (LUFS)**. Each sample is then scaled toward a
+target of **-14 LUFS** (the common streaming loudness target), clamped to ±24 dB
+so a near-silent clip can't be boosted into distortion, and finally the
+configured `volume` is applied. The result: all sounds play at the same
+loudness regardless of how loud or quiet the source file was recorded, and the
+30% default keeps the first play conservative.
 
 ## Playback rule
 

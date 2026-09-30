@@ -1,6 +1,6 @@
 {
   "name": "soundboard",
-  "description": "Viewers spend points to play a sound effect on the streamer's machine (!snd airhorn, !snd laugh). Drop audio files (wav/mp3/flac/ogg) into the sounds_dir folder and the module picks them all up automatically — the file stem is the command name. Every clip is normalised (peak-scaled) then played at the single volume, so a quiet and a loud recording sound the same loudness. Sounds play serially: one at a time, the next starts the moment the previous finishes. Optional cooldown_secs adds a fixed pause between plays.",
+  "description": "Viewers spend points to play a sound effect on the streamer's machine (!snd airhorn, !snd laugh). Drop audio files (wav/mp3/flac/ogg) into the sounds_dir folder and the module picks them all up automatically — the file stem is the command name. Every clip is normalised to a target loudness (-14 LUFS, K-weighted) then played at the single volume (default 30%), so a quiet and a loud recording sound the same and a loud clip never blasts. Sounds play serially: one at a time, the next starts the moment the previous finishes. Optional cooldown_secs adds a fixed pause between plays.",
   "version": "0.1.0",
   "capabilities": "preprocess",
   "root_file": "./src/main.rs",
