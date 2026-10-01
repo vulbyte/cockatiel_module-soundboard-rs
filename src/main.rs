@@ -459,6 +459,18 @@ async fn run_session(
             }
             Some(ModulePayload::MessagePreProcess(pre)) => {
                 let MessagePreProcess { message_uuid7: uuid, raw_message, audio, audio_type } = pre;
+                if !uuid.is_empty() {
+                    let receipt = ContainerForEngine {
+                        version: 2,
+                        auth_token: s.auth_token.clone(),
+                        module_name: s.module_name.clone(),
+                        module_instance_uuid7: s.instance_uuid7.clone(),
+                        payload: Some(EnginePayload::MessageAck(MessageAck {
+                            message_uuid7: uuid.clone(),
+                        })),
+                    };
+                    send_container(&write_shared, receipt).await;
+                }
                 // ACK the stage on EVERY path so the pipeline never stalls.
                 let ack = ContainerForEngine {
                     version: 2,
@@ -534,6 +546,18 @@ async fn run_session(
                 }
             }
             Some(ModulePayload::MessageInProcess(process)) => {
+                if !process.message_uuid7.is_empty() {
+                    let receipt = ContainerForEngine {
+                        version: 2,
+                        auth_token: s.auth_token.clone(),
+                        module_name: s.module_name.clone(),
+                        module_instance_uuid7: s.instance_uuid7.clone(),
+                        payload: Some(EnginePayload::MessageAck(MessageAck {
+                            message_uuid7: process.message_uuid7.clone(),
+                        })),
+                    };
+                    send_container(&write_shared, receipt).await;
+                }
                 let ack = ContainerForEngine {
                     version: 2,
                     auth_token: s.auth_token.clone(),
