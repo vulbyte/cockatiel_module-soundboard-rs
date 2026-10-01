@@ -21,7 +21,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use cockatiel_client::proto::container::Payload;
+use cockatiel_client::proto::container_for_engine::Payload as EnginePayload;
+use cockatiel_client::proto::container_for_module::Payload as ModulePayload;
 use cockatiel_client::proto::*;
 use cockatiel_client::CockatielClient;
 use futures_util::{SinkExt, StreamExt};
@@ -280,7 +281,7 @@ struct Session {
     instance_uuid7: String,
 }
 
-async fn send_container(write: &Arc<AsyncMutex<WsWriteHalf>>, container: Container) {
+async fn send_container(write: &Arc<AsyncMutex<WsWriteHalf>>, container: ContainerForEngine) {
     let mut buf = Vec::new();
     if container.encode(&mut buf).is_ok() {
         let mut w = write.lock().await;
@@ -296,12 +297,12 @@ async fn send_to_chat(
     chat: &ChatMessage,
 ) {
     let Some(ud) = &chat.user_data else { return };
-    let container = Container {
-        version: 1,
+    let container = ContainerForEngine {
+        version: 2,
         auth_token: s.auth_token.clone(),
         module_name: s.module_name.clone(),
         module_instance_uuid7: s.instance_uuid7.clone(),
-        payload: Some(Payload::SendToPlatforms(SendToPlatforms {
+        payload: Some(EnginePayload::SendToPlatforms(SendToPlatforms {
             msg,
             level: 0,
             module_uuid7: s.instance_uuid7.clone(),
@@ -407,12 +408,12 @@ async fn run_session(
     };
 
     // Register the !snd command so the engine routes `!snd <name>` to us.
-    let commands = Container {
-        version: 1,
+    let commands = ContainerForEngine {
+        version: 2,
         auth_token: session.auth_token.clone(),
         module_name: session.module_name.clone(),
         module_instance_uuid7: session.instance_uuid7.clone(),
-        payload: Some(Payload::CommandsPayload(Commands {
+        payload: Some(EnginePayload::Commands(Commands {
             commands: vec![Command {
                 command_name: COMMAND_NAME.to_string(),
                 command_flag: config.command_flag.clone(),
@@ -439,32 +440,32 @@ async fn run_session(
                 break;
             }
         };
-        let Ok(container) = Container::decode(data.as_ref()) else {
+        let Ok(container) = ContainerForModule::decode(data.as_ref()) else {
             continue;
         };
 
         match container.payload {
-            Some(Payload::AuthVerify(_)) => {
-                let reply = Container {
-                    version: 1,
+            Some(ModulePayload::AuthVerify(_)) => {
+                let reply = ContainerForEngine {
+                    version: 2,
                     auth_token: s.auth_token.clone(),
                     module_name: s.module_name.clone(),
                     module_instance_uuid7: s.instance_uuid7.clone(),
-                    payload: Some(Payload::AuthVerify(AuthVerify {
+                    payload: Some(EnginePayload::AuthVerify(AuthVerify {
                         cur_auth: s.auth_token.clone(),
                     })),
                 };
                 send_container(&write_shared, reply).await;
             }
-            Some(Payload::MessagePreProcess(pre)) => {
+            Some(ModulePayload::MessagePreProcess(pre)) => {
                 let MessagePreProcess { message_uuid7: uuid, raw_message, audio, audio_type } = pre;
                 // ACK the stage on EVERY path so the pipeline never stalls.
-                let ack = Container {
-                    version: 1,
+                let ack = ContainerForEngine {
+                    version: 2,
                     auth_token: s.auth_token.clone(),
                     module_name: s.module_name.clone(),
                     module_instance_uuid7: s.instance_uuid7.clone(),
-                    payload: Some(Payload::MessagePreProcess(MessagePreProcess {
+                    payload: Some(EnginePayload::MessagePreProcess(MessagePreProcess {
                         message_uuid7: uuid,
                         raw_message: raw_message.clone(),
                         audio,
@@ -532,13 +533,13 @@ async fn run_session(
                     }
                 }
             }
-            Some(Payload::MessageInProcess(process)) => {
-                let ack = Container {
-                    version: 1,
+            Some(ModulePayload::MessageInProcess(process)) => {
+                let ack = ContainerForEngine {
+                    version: 2,
                     auth_token: s.auth_token.clone(),
                     module_name: s.module_name.clone(),
                     module_instance_uuid7: s.instance_uuid7.clone(),
-                    payload: Some(Payload::MessageInProcess(MessageInProcess {
+                    payload: Some(EnginePayload::MessageInProcess(MessageInProcess {
                         message_uuid7: process.message_uuid7,
                         raw_message: process.raw_message,
                         processed_message: process.processed_message,
