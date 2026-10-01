@@ -56,7 +56,7 @@ struct Config {
     /// How much score a viewer must spend to trigger a sound. Deducted from
     /// their CURRENT score by the engine's gate; the lifetime total is
     /// untouched.
-    price: u64,
+    price: u32,
     /// The folder the streamer drops audio files into. The module scans it and
     /// exposes every supported file (wav/mp3/flac/ogg) as `!snd <file stem>`.
     /// A newly dropped file appears without a restart; a removed file stops
@@ -71,10 +71,10 @@ struct Config {
     /// Fixed pause (seconds) between plays. Default 0 = the next sound starts
     /// the moment the previous file finishes. Streamer-adjustable.
     #[serde(default)]
-    cooldown_secs: u64,
+    cooldown_secs: u32,
     /// Reconnect backoff bounds (seconds).
-    reconnect_base_secs: u64,
-    reconnect_max_secs: u64,
+    reconnect_base_secs: u32,
+    reconnect_max_secs: u32,
 }
 
 impl Default for Config {
@@ -154,7 +154,7 @@ struct PlayRequest {
 
 /// Runs the serial playback loop: one sound at a time, next starts when the
 /// current file has finished (plus an optional fixed cooldown).
-fn spawn_player(rx: mpsc::Receiver<PlayRequest>, cooldown_secs: u64) {
+fn spawn_player(rx: mpsc::Receiver<PlayRequest>, cooldown_secs: u32) {
     // rodio's OutputStream/Sink are not Send, so the player owns them on a
     // dedicated thread and blocks on the channel — serial by construction.
     std::thread::spawn(move || {
@@ -171,7 +171,7 @@ fn spawn_player(rx: mpsc::Receiver<PlayRequest>, cooldown_secs: u64) {
                 Err(e) => error!("failed to play '{}': {e}", req.name),
             }
             if cooldown_secs > 0 {
-                std::thread::sleep(Duration::from_secs(cooldown_secs));
+                std::thread::sleep(Duration::from_secs(cooldown_secs as u64));
             }
         }
     });
@@ -181,12 +181,12 @@ fn spawn_player(rx: mpsc::Receiver<PlayRequest>, cooldown_secs: u64) {
 /// volume is applied. -14 LUFS is the common streaming/YouTube loudness target;
 /// two files with wildly different recorded levels both end up here, so neither
 /// blasts over the other.
-const TARGET_LUFS: f64 = -14.0;
+const TARGET_LUFS: f32 = -14.0;
 
 /// The max gain (dB) the normaliser may apply. A file measured far below the
 /// target is brought up but clamped, so a near-silent clip can't be boosted
 /// into distortion.
-const MAX_GAIN_DB: f64 = 24.0;
+const MAX_GAIN_DB: f32 = 24.0;
 
 /// Play one file at the given volume, NORMALISED to a target LUFS loudness.
 /// The whole file is decoded, its integrated loudness measured with a
@@ -220,7 +220,7 @@ fn play_one(
     // Measure integrated loudness (K-weighted, ITU-R BS.1770).
     let measured_lufs = measure_lufs(&samples, channels, sample_rate);
     let gain_db = (TARGET_LUFS - measured_lufs).clamp(-MAX_GAIN_DB, MAX_GAIN_DB);
-    let gain = 10f64.powf(gain_db / 20.0) as f32;
+    let gain = 10f32.powf(gain_db / 20.0);
     let volume = volume.clamp(0.0, 1.0);
     let scaled: Vec<f32> = samples.into_iter().map(|s| s * gain * volume).collect();
     info!(
@@ -241,7 +241,7 @@ fn play_one(
 
 /// Measure the integrated loudness (LUFS) of interleaved samples using a
 /// K-weighted ITU-R BS.1770-4 meter.
-fn measure_lufs(samples: &[f32], channels: u16, sample_rate: u32) -> f64 {
+fn measure_lufs(samples: &[f32], channels: u16, sample_rate: u32) -> f32 {
     use broadcast_loudness::{ChannelLayout, LoudnessMeter};
     let mut meter = match channels {
         1 => LoudnessMeter::new(sample_rate, ChannelLayout::Mono).ok(),
@@ -262,7 +262,7 @@ fn measure_lufs(samples: &[f32], channels: u16, sample_rate: u32) -> f64 {
         }
     }
     meter.finish();
-    let lufs = meter.integrated_lufs();
+    let lufs = meter.integrated_lufs() as f32;
     // A very short / near-silent file has no gated loudness blocks and reports
     // -inf. Assume on-target (no gain) rather than boosting into distortion.
     if lufs.is_finite() {
@@ -388,7 +388,7 @@ async fn session_loop(
             Err(e) => error!("session error: {e}"),
         }
         warn!("engine disconnected — reconnecting in {backoff}s");
-        tokio::time::sleep(Duration::from_secs(backoff)).await;
+        tokio::time::sleep(Duration::from_secs(backoff as u64)).await;
         backoff = (backoff * 2).min(config.reconnect_max_secs.max(1));
     }
 }
