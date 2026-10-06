@@ -54,5 +54,10 @@
   "autostart": false,
   "authority": 0,
   "min_rank": 0,
-  "price": 10000
+  "price": 10000,
+  "release": {
+    "repo": "vulbyte/cockatiel_module-soundboard-rs",
+    "base_url": "https://github.com/vulbyte/cockatiel_module-soundboard-rs/releases/download",
+    "tag": "v0.1.0"
+  }
 }
